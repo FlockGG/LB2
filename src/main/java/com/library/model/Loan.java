@@ -16,6 +16,7 @@ public class Loan {
     public Long bookId;
     public String bookTitle;
     public String studentId;
+    public String ownerId;           // the librarian who owns the book (receives the request)
     public String status;
     public int days;                 // how long the student asked to keep the book
     public long requestedAt;
@@ -26,4 +27,5 @@ public class Loan {
     @Transient public String studentName;
     @Transient public String studentSchool;
     @Transient public String studentPhoto;
+    @Transient public String libraryName;
 }

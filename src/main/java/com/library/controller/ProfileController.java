@@ -33,7 +33,7 @@ public class ProfileController {
     @GetMapping("/me/stats")
     public Map<String, Object> myStats(@RequestHeader(value = "X-Token", required = false) String token) {
         Account me = auth.require(token);
-        return "lib".equals(me.role) ? stats.library() : stats.student(me.id);
+        return "lib".equals(me.role) ? stats.library(me.id) : stats.student(me.id, null);
     }
 
     /** Update my own profile. Only the fields that belong to my role are changed. */
@@ -66,28 +66,36 @@ public class ProfileController {
         return accounts.save(me);
     }
 
-    /** Library info shown to students: the librarian's library name, address, hours and numbers. */
+    /**
+     * Profile and numbers of ONE library. Students pass the ownerId of the book they are looking at.
+     * A librarian without ownerId gets his own library.
+     */
     @GetMapping("/library")
-    public Map<String, Object> library(@RequestHeader(value = "X-Token", required = false) String token) {
-        auth.require(token);
-        Account lib = accounts.findByRole("lib").stream()
-                .filter(a -> notBlank(a.libraryName) || notBlank(a.address) || notBlank(a.hours) || notBlank(a.about))
-                .findFirst().orElse(null);
+    public Map<String, Object> library(@RequestHeader(value = "X-Token", required = false) String token,
+                                       @RequestParam(value = "ownerId", required = false) String ownerId) {
+        Account me = auth.require(token);
+        if (ownerId == null || ownerId.isBlank()) {
+            if ("lib".equals(me.role)) ownerId = me.id;
+            else throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Open a book first to see its library.");
+        }
+        Account lib = accounts.findById(ownerId).filter(a -> "lib".equals(a.role)).orElse(null);
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("account", lib);
-        m.put("stats", stats.library());
+        m.put("stats", lib == null ? null : stats.library(ownerId));
         return m;
     }
 
-    /** Librarian: a student's profile and behaviour record. */
+    /** Librarian: profile and behaviour record of a student who has borrowed from MY library. */
     @GetMapping("/students/{id}")
     public Map<String, Object> student(@RequestHeader(value = "X-Token", required = false) String token, @PathVariable String id) {
-        auth.require(token, "lib");
+        Account me = auth.require(token, "lib");
         Account a = accounts.findById(id).filter(x -> "stu".equals(x.role))
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Student not found."));
+        if (!stats.hasLoanWith(id, me.id))
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "This student has not used your library.");
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("account", a);
-        m.put("stats", stats.student(id));
+        m.put("stats", stats.student(id, me.id));
         return m;
     }
 

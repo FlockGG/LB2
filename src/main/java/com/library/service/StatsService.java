@@ -1,5 +1,6 @@
 package com.library.service;
 
+import com.library.model.Book;
 import com.library.model.Loan;
 import com.library.repository.BookRepository;
 import com.library.repository.LoanRepository;
@@ -19,12 +20,38 @@ public class StatsService {
         this.books = books;
     }
 
-    /** Reading record of one student: how often and how early they return books. */
-    public Map<String, Object> student(String studentId) {
+    /** bookId -> ownerId, used for old loans that do not have an owner stored yet. */
+    private Map<Long, String> bookOwners() {
+        Map<Long, String> m = new HashMap<>();
+        for (Book b : books.findAll()) if (b.ownerId != null) m.put(b.id, b.ownerId);
+        return m;
+    }
+
+    /** True if the loan belongs to the given librarian. ownerId == null means "every library". */
+    private static boolean belongsTo(Loan l, String ownerId, Map<Long, String> bookOwners) {
+        if (ownerId == null) return true;
+        String owner = l.ownerId != null ? l.ownerId : bookOwners.get(l.bookId);
+        return ownerId.equals(owner);
+    }
+
+    /** Has this student ever borrowed (or asked for) a book of this librarian? */
+    public boolean hasLoanWith(String studentId, String ownerId) {
+        Map<Long, String> bo = bookOwners();
+        for (Loan l : loans.findByStudentId(studentId)) if (belongsTo(l, ownerId, bo)) return true;
+        return false;
+    }
+
+    /**
+     * Reading record of one student: how often and how early they return books.
+     * ownerId = only count loans of that librarian's books; null = all libraries.
+     */
+    public Map<String, Object> student(String studentId, String ownerId) {
         long now = System.currentTimeMillis();
+        Map<Long, String> bo = bookOwners();
         int total = 0, returned = 0, late = 0, overdue = 0;
         double sumEarlyDays = 0;
         for (Loan l : loans.findByStudentId(studentId)) {
+            if (!belongsTo(l, ownerId, bo)) continue;
             boolean issued = "ISSUED".equals(l.status), done = "RETURNED".equals(l.status);
             if (!issued && !done) continue;
             total++;
@@ -53,10 +80,12 @@ public class StatsService {
         return m;
     }
 
-    /** Numbers for the whole library. */
-    public Map<String, Object> library() {
+    /** Numbers for ONE library (the loans and books of the given librarian). */
+    public Map<String, Object> library(String ownerId) {
+        Map<Long, String> bo = bookOwners();
         int issued = 0, returned = 0, declined = 0, requests = 0;
         for (Loan l : loans.findAll()) {
+            if (!belongsTo(l, ownerId, bo)) continue;
             switch (l.status) {
                 case "ISSUED" -> issued++;
                 case "RETURNED" -> { issued++; returned++; }
@@ -65,12 +94,14 @@ public class StatsService {
                 default -> { }
             }
         }
+        long titles = ownerId == null ? books.count()
+                : books.findAll().stream().filter(b -> ownerId.equals(b.ownerId)).count();
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("issued", issued);
         m.put("requests", requests);
         m.put("completion", issued == 0 ? null : (int) Math.round(returned * 100.0 / issued));
         m.put("approval", issued + declined == 0 ? null : (int) Math.round(issued * 100.0 / (issued + declined)));
-        m.put("titles", books.count());
+        m.put("titles", titles);
         return m;
     }
 }

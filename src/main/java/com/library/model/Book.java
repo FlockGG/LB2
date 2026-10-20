@@ -16,8 +16,12 @@ public class Book {
     public int copies = 1;
     public String cover;             // image url, e.g. /uploads/abc.png
     public long createdAt;
+    public String ownerId;           // account id of the librarian who owns this book
+    public String address;           // library address shown to students for this book
 
     // Calculated on the fly, not stored in the database
     @Transient public int available;
     @Transient public int timesBorrowed;
+    @Transient public String libraryName;      // the owner's library name
+    @Transient public String libraryAddress;   // address to show (the book's address, or the owner's profile address)
 }

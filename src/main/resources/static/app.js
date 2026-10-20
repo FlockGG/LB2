@@ -96,7 +96,7 @@ A.editbook = d => openBookForm(books.find(b => b.id === +d.id));
 A.delbook = async d => { if (confirm('Remove this book?')) { await api('/books/' + d.id, 'DELETE'); closeModal(); await refresh(); } };
 A.savebook = async d => {
   const v = id => $(id).value.trim();
-  const body = {title: v('#bt'), author: v('#ba'), genre: v('#bg'), copies: +v('#bn') || 1, description: v('#bd'), cover: newCover || ''};
+  const body = {title: v('#bt'), author: v('#ba'), genre: v('#bg'), copies: +v('#bn') || 1, address: v('#bl'), description: v('#bd'), cover: newCover || ''};
   if (!body.title || !body.author) return say('Title and author are required.');
   await api(d.id ? '/books/' + d.id : '/books', d.id ? 'PUT' : 'POST', body);
   closeModal(); newCover = null; await refresh();
@@ -112,7 +112,7 @@ A.ret = async d => { await api(`/loans/${d.id}/return`, 'POST'); await refresh()
 A.ext = async d => { await api(`/loans/${d.id}/extend`, 'POST'); await refresh(); };
 A.sret = async d => { if (confirm('Have you returned this book?')) { await api(`/loans/${d.id}/return-request`, 'POST'); await refresh(); } };
 A.stu = d => openStudent(d.id, +d.loan);
-A.lib = () => openLibrary();
+A.lib = d => openLibrary(d.owner);
 
 // --- profile ---
 A.pedit = d => { pEdit = d.v === '1'; render(); };
@@ -125,7 +125,7 @@ A.psave = async () => {
 document.addEventListener('change', async e => {
   const f = e.target.files && e.target.files[0]; if (!f) return;
   try {
-    if (e.target.id === 'cv') { newCover = await upload(f); $('#fl').innerHTML = coverLabel(); }
+    if (e.target.id === 'cv') { const url = await upload(f); const fl = $('#fl'); if (fl) { newCover = url; fl.innerHTML = coverLabel(); } }
     if (e.target.id === 'ph') { const url = await upload(f); me = await api('/profile', 'PUT', {photo: url}); render(); }
   } catch (err) { say(err.message); }
 });
@@ -140,6 +140,7 @@ function openBookForm(b) {
   $('#modal').innerHTML = `<div class="ov"><div class="mod"><h2>${b.id ? 'Edit book' : 'Add book'}</h2>
   <div><label>Title</label><input id="bt" value="${esc(b.title)}"></div><div><label>Author</label><input id="ba" value="${esc(b.author)}"></div>
   <div><label>Genre</label><input id="bg" value="${esc(b.genre)}"></div><div><label>Number of books</label><input id="bn" type="number" min="1" value="${b.copies || 1}"></div>
+  <div><label>Library address</label><input id="bl" value="${esc(b.address || me.address || '')}" placeholder="Where students can find this book"></div>
   <div><label>Description</label><textarea id="bd" rows="4">${esc(b.description)}</textarea></div>
   <label class="file" id="fl">${coverLabel()}</label>
   <div class="row"><button class="b ghost" style="color:var(--mut)" data-a="close">Cancel</button><button class="b" data-a="savebook" data-id="${b.id || ''}">${b.id ? 'Save' : 'Add book'}</button></div></div></div>`;
@@ -155,9 +156,10 @@ function openDetail(id) {
   $('#modal').innerHTML = `<div class="ov"><div class="mod"><div class="row" style="justify-content:flex-start;align-items:flex-start;gap:14px;flex-wrap:nowrap">${cover(b)}<div><h3>${esc(b.title)}</h3>
   <div class="m" style="color:var(--mut);margin-bottom:8px">by ${esc(b.author)}</div><div class="row" style="justify-content:flex-start">${b.genre ? `<span class="pill">${esc(b.genre)}</span>` : ''}
   <span class="pill ${left > 0 ? 'ok' : 'warn'}">${left > 0 ? left + ' of ' + b.copies + ' available' : 'All out'}</span></div>
+  <div class="m" style="margin-top:8px">\uD83C\uDFDB <b>${esc(b.libraryName)}</b><br>\uD83D\uDCCD ${esc(b.libraryAddress || 'Address not set')}</div>
   <div class="m" style="color:var(--mut);margin-top:8px">Borrowed ${b.timesBorrowed} time${b.timesBorrowed === 1 ? '' : 's'}</div></div></div>
   <div><label>About this book</label><p class="dsc">${esc(b.description) || 'No description yet.'}</p></div>
-  ${role() === 'stu' ? '<div><button class="chip" data-a="lib">\uD83C\uDFDB About the library &amp; librarian</button></div>' : ''}
+  ${role() === 'stu' ? `<div><button class="chip" data-a="lib" data-owner="${esc(b.ownerId)}">\uD83C\uDFDB About the library &amp; librarian</button></div>` : ''}
   <div class="row" style="justify-content:space-between"><div class="row">${role() === 'stu' ? `<button class="b ghost" style="color:var(--ink)" data-a="save" data-id="${id}">${sv ? '\u2665 Saved' : '\u2661 Save'}</button>` : ''}
   <button class="b ghost" style="color:var(--mut)" data-a="close">Close</button></div><div class="row">${act}</div></div></div></div>`;
 }
@@ -183,9 +185,9 @@ async function openStudent(id, loanId) {
   ${pend ? `<div class="m"><b>Requested:</b> ${esc(l.bookTitle)} for ${l.days} days</div>` : ''}
   <div class="row" style="justify-content:flex-end"><button class="b ghost" style="color:var(--mut)" data-a="close">Close</button>${pend ? `<button class="b ghost" data-a="rej" data-id="${l.id}">Decline</button><button class="b" data-a="iss" data-id="${l.id}">Issue book</button>` : ''}</div></div></div>`;
 }
-async function openLibrary() {
-  const {account: a, stats: s} = await api('/library');
-  if (!a) return say('The librarian has not set up a profile yet.');
+async function openLibrary(ownerId) {
+  const {account: a, stats: s} = await api('/library?ownerId=' + encodeURIComponent(ownerId || ''));
+  if (!a) return say('This library has not set up a profile yet.');
   const f = (l, v) => v ? `<div><label>${l}</label><p class="dsc">${esc(v)}</p></div>` : '';
   $('#modal').innerHTML = `<div class="ov"><div class="mod"><div class="row" style="flex-wrap:nowrap">${avatar(a, true)}<div><h3>${esc(a.libraryName || 'Library')}</h3><div class="m" style="color:var(--mut)">Librarian</div></div></div>
   ${f('Address', a.address)}${f('Desk hours', a.hours)}${f('About', a.about)}${libRecordHtml(s)}<div class="row"><button class="b" data-a="close">Close</button></div></div></div>`;
@@ -211,7 +213,7 @@ function bookCard(b) {
   let foot;
   if (role() === 'lib') foot = `<span class="pill ${b.available > 0 ? 'ok' : 'warn'}">${b.available > 0 ? b.available + ' of ' + b.copies + ' in' : 'All out'}</span>${b.available === b.copies ? `<button class="b ghost" data-a="delbook" data-id="${b.id}">\u2715</button>` : ''}`;
   else foot = mine ? `<span class="pill warn">${mine.status === 'ISSUED' ? 'With you' : 'Requested'}</span>` : b.available > 0 ? `<button class="b" data-a="take" data-id="${b.id}">Borrow</button>` : '<span class="pill">Unavailable</span>';
-  return `<div class="card bk" data-a="open" data-id="${b.id}">${cover(b)}<div class="g"><div class="t">${esc(b.title)}</div><div class="m">${esc(b.author)}${b.genre ? ' \u00B7 ' + esc(b.genre) : ''}</div></div><div class="ft">${foot}</div></div>`;
+  return `<div class="card bk" data-a="open" data-id="${b.id}">${cover(b)}<div class="g"><div class="t">${esc(b.title)}</div><div class="m">${esc(b.author)}${b.genre ? ' \u00B7 ' + esc(b.genre) : ''}</div>${role() === 'stu' ? `<div class="m">\uD83C\uDFDB ${esc(b.libraryName)}</div><div class="m">\uD83D\uDCCD ${esc(b.libraryAddress || 'Address not set')}</div>` : ''}</div><div class="ft">${foot}</div></div>`;
 }
 function libView() {
   const req = loans.filter(l => l.status === 'REQUESTED'), out = loans.filter(l => l.status === 'ISSUED'), hist = loans.filter(l => l.status === 'RETURNED');
@@ -220,7 +222,7 @@ function libView() {
   if (sub === 'books') {
     h += `<button class="addbox" data-a="addbook">\uFF0B Add book</button><input id="q" placeholder="Search books" value="${esc(q)}" style="margin-bottom:14px">`;
     const f = books.filter(b => (b.title + ' ' + b.author).toLowerCase().includes(q.toLowerCase()));
-    return h + (f.length ? `<div class="grid">${f.map(bookCard).join('')}</div>` : '<div class="empty">No books yet. Add the first one.</div>');
+    return h + (f.length ? `<div class="grid">${f.map(bookCard).join('')}</div>` : '<div class="empty">No books yet. Add your first book.</div>');
   }
   const list = sub === 'req' ? req : sub === 'out' ? out : hist;
   return h + (list.length ? list.map(l => `<div class="card" data-a="stu" data-id="${l.studentId}" data-loan="${l.id}">${studentAv(l)}<div class="g"><div class="t">${esc(l.bookTitle)}</div>
@@ -232,7 +234,7 @@ function libView() {
 function stuView() {
   const mine = loans;
   let h = `<div class="hero"><h2>Hi ${esc((me.name || 'there').split(' ')[0])} \uD83D\uDC4B</h2><div class="stats">${stat(mine.filter(l => l.status === 'ISSUED').length, 'With you', true)}${stat(mine.filter(l => l.status === 'REQUESTED').length, 'Requested')}${stat(mine.filter(late).length, 'Overdue')}${stat(mine.filter(l => l.status === 'RETURNED').length, 'Read')}</div></div>`;
-  h += `<div class="sub"><button class="chip ${sub !== 'mine' ? 'on' : ''}" data-a="sub" data-v="books">Browse</button><button class="chip ${sub === 'mine' ? 'on' : ''}" data-a="sub" data-v="mine">My books</button><button class="chip" data-a="lib">\uD83C\uDFDB Library info</button></div>`;
+  h += `<div class="sub"><button class="chip ${sub !== 'mine' ? 'on' : ''}" data-a="sub" data-v="books">Browse</button><button class="chip ${sub === 'mine' ? 'on' : ''}" data-a="sub" data-v="mine">My books</button></div>`;
   if (sub !== 'mine') {
     const gs = ['All', ...new Set(books.map(b => b.genre).filter(Boolean))], sv = saved();
     h += `<input id="q" placeholder="Search title or author" value="${esc(q)}" style="margin-bottom:10px"><div class="sub"><button class="chip ${onlyAvail ? 'on' : ''}" data-a="tog" data-v="avail">Available now</button><button class="chip ${onlySaved ? 'on' : ''}" data-a="tog" data-v="saved">\u2665 Saved</button></div>`;
@@ -242,7 +244,7 @@ function stuView() {
   }
   const l2 = mine.filter(l => l.status !== 'DECLINED');
   return h + (l2.length ? l2.map(l => { const bk = books.find(b => b.id === l.bookId) || {title: l.bookTitle};
-    return `<div class="card">${cover(bk)}<div class="g"><div class="t">${esc(l.bookTitle)}</div><div class="m">${l.status === 'ISSUED' ? 'Due ' + fmt(l.dueAt) : l.status === 'RETURNED' ? 'Returned ' + fmt(l.returnedAt) : 'Waiting for librarian \u00B7 ' + l.days + ' days'}</div></div>
+    return `<div class="card">${cover(bk)}<div class="g"><div class="t">${esc(l.bookTitle)}</div><div class="m">${l.status === 'ISSUED' ? 'Due ' + fmt(l.dueAt) : l.status === 'RETURNED' ? 'Returned ' + fmt(l.returnedAt) : 'Waiting for librarian \u00B7 ' + l.days + ' days'}${l.libraryName ? ' \u00B7 ' + esc(l.libraryName) : ''}</div></div>
     ${late(l) ? '<span class="pill late">Overdue</span>' : ''}
     ${l.status === 'REQUESTED' ? `<button class="b ghost" data-a="rej" data-id="${l.id}">Cancel</button>` : l.status === 'ISSUED' ? (l.returnRequested ? '<span class="pill warn">Return requested</span>' : `<button class="b alt" data-a="sret" data-id="${l.id}">Return book</button>`) : '<span class="pill">Returned</span>'}</div>`; }).join('') : '<div class="empty">You have no books yet.</div>');
 }
