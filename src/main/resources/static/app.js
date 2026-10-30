@@ -42,12 +42,19 @@ async function loadStats() { pstats = await api('/me/stats'); }
 const closeModal = () => { $('#modal').innerHTML = ''; };
 const say = m => { $('#modal').innerHTML = `<div class="ov"><div class="mod"><h2>${esc(m)}</h2><div class="row"><button class="b" data-a="close">OK</button></div></div></div>`; };
 const stat = (n, l, hl) => `<div class="stat ${hl ? 'hl' : ''}"><b>${n}</b><small>${l}</small></div>`;
-const cover = b => b.cover ? `<img class="cover" src="${esc(b.cover)}" alt="">` : `<div class="cover">${esc((b.title || '?')[0]).toUpperCase()}</div>`;
+const cover = b => b.cover ? `<img class="cover" src="${esc(b.cover)}" alt="" data-l="${esc((b.title || '?')[0]).toUpperCase()}">` : `<div class="cover">${esc((b.title || '?')[0]).toUpperCase()}</div>`;
 const avatar = (a, big) => {
   const n = (a && (a.role === 'lib' ? a.libraryName : a.name)) || '?';
-  return a && a.photo ? `<img class="av ${big ? 'big' : ''}" src="${esc(a.photo)}" alt="">` : `<div class="av ${big ? 'big' : ''}">${esc(n[0]).toUpperCase()}</div>`;
+  return a && a.photo ? `<img class="av ${big ? 'big' : ''}" src="${esc(a.photo)}" alt="" data-l="${esc(n[0]).toUpperCase()}">` : `<div class="av ${big ? 'big' : ''}">${esc(n[0]).toUpperCase()}</div>`;
 };
-const studentAv = l => l.studentPhoto ? `<img class="av" src="${esc(l.studentPhoto)}" alt="">` : `<div class="av">${esc((l.studentName || 'S')[0]).toUpperCase()}</div>`;
+const studentAv = l => l.studentPhoto ? `<img class="av" src="${esc(l.studentPhoto)}" alt="" data-l="${esc((l.studentName || 'S')[0]).toUpperCase()}">` : `<div class="av">${esc((l.studentName || 'S')[0]).toUpperCase()}</div>`;
+
+// A picture that cannot be loaded (for example an old, lost upload) turns into a letter tile instead of a broken icon
+document.addEventListener('error', e => {
+  const t = e.target;
+  if (t.tagName !== 'IMG' || !(t.classList.contains('cover') || t.classList.contains('av'))) return;
+  const d = document.createElement('div'); d.className = t.className; d.textContent = t.dataset.l || '?'; t.replaceWith(d);
+}, true);
 
 // ---------- actions (every button has data-a="name") ----------
 const A = {};
@@ -274,12 +281,29 @@ function render() {
   app.innerHTML = !me ? gateView() : view === 'pro' ? profileView() : role() === 'lib' ? libView() : stuView();
 }
 
+// ---------- live refresh: dashboards and lists update for everybody without reloading ----------
+let lastSnap = '';
+async function liveRefresh() {
+  if (!me || document.hidden || $('#modal').innerHTML) return;           // not while a pop-up is open
+  const f = document.activeElement;
+  if (f && f.matches('input,textarea,select') && f.id !== 'q') return;  // never interrupt typing in a form
+  try {
+    await load();
+    if (view === 'pro' && pEdit !== true) await loadStats();
+    const snap = JSON.stringify([me, books, loans, pstats, Math.floor(Date.now() / 60000)]);  // minute: overdue changes with time
+    if (snap === lastSnap) return;                                       // nothing changed, no redraw
+    lastSnap = snap;
+    const wasQ = f && f.id === 'q', pos = wasQ ? f.selectionStart : 0;
+    render();
+    if (wasQ) { const i = $('#q'); if (i) { i.focus(); i.setSelectionRange(pos, pos); } }
+  } catch (e) {}
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden) liveRefresh(); });
+window.addEventListener('focus', liveRefresh);
+
 // ---------- start ----------
 (async () => {
   if (token) { try { await load(); } catch (e) { token = me = null; } }
   render();
-  setInterval(async () => {          // keep the data fresh (new requests appear by themselves)
-    if (!me || $('#modal').innerHTML || (document.activeElement && document.activeElement.matches('input,textarea,select'))) return;
-    try { await load(); render(); } catch (e) {}
-  }, 15000);
+  setInterval(liveRefresh, 5000);   // everybody's screen updates by itself every few seconds
 })();

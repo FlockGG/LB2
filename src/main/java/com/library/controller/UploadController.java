@@ -1,28 +1,26 @@
 package com.library.controller;
 
+import com.library.model.StoredImage;
+import com.library.repository.ImageRepository;
 import com.library.service.AuthService;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.io.IOException;
-import java.io.InputStream;
-import java.nio.file.*;
 import java.util.Map;
 import java.util.UUID;
 
-/** Saves uploaded images (book covers, profile photos) into the uploads folder. */
+/** Saves uploaded images (book covers, profile photos) in the database, so they survive restarts and redeploys. */
 @RestController
 public class UploadController {
     private final AuthService auth;
+    private final ImageRepository images;
 
-    @Value("${app.upload-dir}")
-    private String uploadDir;
-
-    public UploadController(AuthService auth) {
+    public UploadController(AuthService auth, ImageRepository images) {
         this.auth = auth;
+        this.images = images;
     }
 
     @PostMapping("/api/upload")
@@ -30,20 +28,14 @@ public class UploadController {
                                       @RequestParam("file") MultipartFile file) throws IOException {
         auth.require(token);
         String type = file.getContentType() == null ? "" : file.getContentType();
-        String ext = switch (type) {
-            case "image/png" -> ".png";
-            case "image/jpeg" -> ".jpg";
-            case "image/gif" -> ".gif";
-            case "image/webp" -> ".webp";
-            default -> null;
-        };
-        if (ext == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Please upload a PNG, JPG, GIF or WebP image.");
-        Path dir = Paths.get(uploadDir).toAbsolutePath();
-        Files.createDirectories(dir);
-        String name = UUID.randomUUID() + ext;
-        try (InputStream in = file.getInputStream()) {
-            Files.copy(in, dir.resolve(name));
-        }
-        return Map.of("url", "/uploads/" + name);
+        if (!type.equals("image/png") && !type.equals("image/jpeg") && !type.equals("image/gif") && !type.equals("image/webp"))
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Please upload a PNG, JPG, GIF or WebP image.");
+        StoredImage img = new StoredImage();
+        img.id = UUID.randomUUID().toString();
+        img.contentType = type;
+        img.data = file.getBytes();
+        img.createdAt = System.currentTimeMillis();
+        images.save(img);
+        return Map.of("url", "/api/images/" + img.id);
     }
 }
